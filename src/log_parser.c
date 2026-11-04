@@ -1,3 +1,8 @@
+/**
+ * @file log_parser.c
+ * @brief Standalone parser for binary records produced by the RW executable.
+ */
+
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -20,6 +25,15 @@
  * [3] reserved
  */
 
+/**
+ * @brief Format a nanosecond timestamp as HH:MM:SS.nnnnnnnnn.
+ *
+ * Values beyond one day are wrapped to the beginning of the day.
+ *
+ * @param[in] ns Timestamp in nanoseconds.
+ * @param[out] out Destination text buffer.
+ * @param[in] out_size Capacity of @p out in bytes.
+ */
 static void format_ns_in_day(uint64_t ns, char *out, size_t out_size) {
     const uint64_t DAY_NS = 86400ULL * 1000000000ULL;
     const uint64_t HOUR_NS = 3600ULL * 1000000000ULL;
@@ -40,6 +54,18 @@ static void format_ns_in_day(uint64_t ns, char *out, size_t out_size) {
     snprintf(out, out_size, "%02u:%02u:%02u.%09u", h, m, s, nsec);
 }
 
+/**
+ * @brief Convert a binary RW log file to CSV on standard output.
+ *
+ * Exactly one input-file path is required. Complete 32-byte records are
+ * parsed, checksum validity is reported, and an incomplete trailing record
+ * is ignored with a warning.
+ *
+ * @param[in] argc Number of command-line arguments.
+ * @param[in] argv Command-line argument vector; argv[1] is the input file.
+ * @return EXIT_SUCCESS on success, or EXIT_FAILURE for invalid arguments,
+ * file-access errors, or read errors.
+ */
 int main(int argc, char *argv[]) {
     if (argc != 2) {
         fprintf(stderr, "Usage: %s <logfile>\n", argv[0]);

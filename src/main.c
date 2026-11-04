@@ -28,11 +28,29 @@
 
 static volatile sig_atomic_t g_stop = 0;
 
+/**
+ * @brief Request an orderly shutdown of all worker threads.
+ *
+ * SIGINT is redirected to this handler, which only sets an async-signal-safe
+ * flag. Worker threads observe the flag and leave their main loops.
+ *
+ * @param[in] sig Signal number supplied by the C runtime.
+ */
 static void sigint_handler(int sig) {
     (void)sig;
     g_stop = 1;
 }
 
+/**
+ * @brief Run the reader-writer simulation until SIGINT is received.
+ *
+ * The function installs the signal handler, initializes shared runtime state,
+ * opens the binary log, starts five readers and three writers, waits for
+ * shutdown, joins every thread, and prints final statistics.
+ *
+ * @return EXIT_SUCCESS after a completed simulation, or EXIT_FAILURE if
+ * initialization or thread creation fails.
+ */
 int main(void) {
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
