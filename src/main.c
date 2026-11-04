@@ -16,15 +16,13 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "../include/arguments.h"
 #include "../include/log.h"
 #include "../include/rand.h"
 #include "../include/runtime.h"
 #include "../include/structs.h"
 #include "../include/util.h"
 #include "../include/worker.h"
-
-#define READER_SIZE 5
-#define WRITER_SIZE 3
 
 static volatile sig_atomic_t g_stop = 0;
 
@@ -45,13 +43,20 @@ static void sigint_handler(int sig) {
  * @brief Run the reader-writer simulation until SIGINT is received.
  *
  * The function installs the signal handler, initializes shared runtime state,
- * opens the binary log, starts five readers and three writers, waits for
- * shutdown, joins every thread, and prints final statistics.
+ * opens the binary log, starts the requested number of readers and writers,
+ * waits for shutdown, joins every thread, and prints final statistics.
  *
  * @return EXIT_SUCCESS after a completed simulation, or EXIT_FAILURE if
  * initialization or thread creation fails.
  */
-int main(void) {
+int main(int argc, char* argv[]) {
+    arguments_t arguments;
+    if (arguments_parse(argc, argv, &arguments) != 0) {
+        return EXIT_FAILURE;
+    }
+
+    const int reader_size = arguments.reader_count;
+    const int writer_size = arguments.writer_count;
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
 
@@ -92,6 +97,7 @@ int main(void) {
         return EXIT_FAILURE;
     }
 
+    printf("Readers: %d, Writers: %d\n", reader_size, writer_size);
     printf("Log file: %s\n", runtime.log_path);
     fflush(stdout);
 
@@ -101,16 +107,24 @@ int main(void) {
     data.value = 0;
     data.checksum = 0 ^ CHECKSUM_MAGIC_NUMBER;
 
-    pthread_t r[READER_SIZE];
-    pthread_t w[WRITER_SIZE];
+    pthread_t* reader_threads =
+        malloc((size_t)reader_size * sizeof(*reader_threads));
+    pthread_t* writer_threads =
+        malloc((size_t)writer_size * sizeof(*writer_threads));
+    if (!reader_threads || !writer_threads) {
+        perror("malloc thread handles");
+        free(reader_threads);
+        free(writer_threads);
+        return EXIT_FAILURE;
+    }
 
     uint64_t base_seed = (uint64_t)time(NULL);
     if (base_seed == 0) {
         base_seed = 0x123456789ABCDEF0ULL;
     }
 
-    /* Create readers: thread id 0..4 */
-    for (int i = 0; i < READER_SIZE; i++) {
+    /* Reader log IDs start at zero. */
+    for (int i = 0; i < reader_size; i++) {
         args_t* args = malloc(sizeof(*args));
         if (!args) {
             perror("malloc reader args");
@@ -128,14 +142,14 @@ int main(void) {
             args->seed = 0xDEADBEEFCAFEBABEULL;
         }
 
-        if (pthread_create(&r[i], NULL, reader, args) != 0) {
+        if (pthread_create(&reader_threads[i], NULL, reader, args) != 0) {
             perror("pthread_create reader");
             return EXIT_FAILURE;
         }
     }
 
-    /* Create writers: thread id 100..102 to avoid conflict with readers */
-    for (int i = 0; i < WRITER_SIZE; i++) {
+    /* Writer log IDs start at 100 to keep the roles distinguishable. */
+    for (int i = 0; i < writer_size; i++) {
         args_t* args = malloc(sizeof(*args));
         if (!args) {
             perror("malloc writer args");
@@ -145,7 +159,10 @@ int main(void) {
         args->i = i;
         args->log_id = (uint16_t)(100 + i);
         args->d = &data;
-        args->seed = base_seed ^ (0x9E3779B97F4A7C15ULL * (uint64_t)(READER_SIZE + i + 1));
+        args->seed =
+            base_seed ^
+            (0x9E3779B97F4A7C15ULL *
+             ((uint64_t)reader_size + (uint64_t)i + 1));
         args->runtime = &runtime;
         args->stop = &g_stop;
 
@@ -153,7 +170,7 @@ int main(void) {
             args->seed = 0xBADBEEFCAFED00DULL;
         }
 
-        if (pthread_create(&w[i], NULL, writer, args) != 0) {
+        if (pthread_create(&writer_threads[i], NULL, writer, args) != 0) {
             perror("pthread_create writer");
             return EXIT_FAILURE;
         }
@@ -164,14 +181,16 @@ int main(void) {
         pause();
     }
 
-    for (int i = 0; i < READER_SIZE; i++) {
-        pthread_join(r[i], NULL);
+    for (int i = 0; i < reader_size; i++) {
+        pthread_join(reader_threads[i], NULL);
     }
 
-    for (int i = 0; i < WRITER_SIZE; i++) {
-        pthread_join(w[i], NULL);
+    for (int i = 0; i < writer_size; i++) {
+        pthread_join(writer_threads[i], NULL);
     }
 
+    free(reader_threads);
+    free(writer_threads);
     print_stats(&runtime);
 
     if (runtime.log_fd >= 0) {
