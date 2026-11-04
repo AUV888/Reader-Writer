@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <time.h>
 
+#include "../include/log.h"
+#include "../include/rand.h"
 #include "../include/structs.h"
 #include "../include/util.h"
 
@@ -17,12 +19,9 @@ void* reader(void* args) {
     free(ar);
 
     while (!*stop) {
-        /*
-         * Original random sleep at most 5s.
-         * Store ms in low 16 bits of log record, so use 0..4999 ms.
-         */
-        uint32_t sleep_ms = (uint32_t)prng_range(&seed, 5000);
-        sleep_us(sleep_ms * 1000U, stop);
+        /* Randomize the interval before this reader's next request. */
+        uint32_t arrival_delay_ms = (uint32_t)prng_range(&seed, 5000);
+        sleep_us(arrival_delay_ms * 1000U, stop);
 
         if (*stop) {
             break;
@@ -60,8 +59,8 @@ void* reader(void* args) {
          * from before sem_wait(&mut) to acquiring full read permission.
          * For the first reader, this includes waiting on wrt.
          */
-        update_max(&runtime->max_read_latency_ns,
-                   timespec_diff_ns(&t0, &t1));
+        uint64_t latency_ns = timespec_diff_ns(&t0, &t1);
+        update_max(&runtime->max_read_latency_ns, latency_ns);
 
         /* Perform reading */
         unsigned long val = data->value;
@@ -87,7 +86,7 @@ void* reader(void* args) {
 
         atomic_fetch_add(&runtime->total_reads, 1);
         write_log_record(runtime, ts, (uint64_t)val, chk, log_id,
-                         (uint16_t)sleep_ms);
+                         latency_ns);
     }
 
     return NULL;
@@ -104,12 +103,9 @@ void* writer(void* args) {
     free(ar);
 
     while (!*stop) {
-        /*
-         * Original random sleep at most 5s.
-         * Store ms in low 16 bits of log record, so use 0..4999 ms.
-         */
-        uint32_t sleep_ms = (uint32_t)prng_range(&seed, 5000);
-        sleep_us(sleep_ms * 1000U, stop);
+        /* Randomize the interval before this writer's next request. */
+        uint32_t arrival_delay_ms = (uint32_t)prng_range(&seed, 5000);
+        sleep_us(arrival_delay_ms * 1000U, stop);
 
         if (*stop) {
             break;
@@ -127,8 +123,8 @@ void* writer(void* args) {
         clock_gettime(CLOCK_MONOTONIC, &t1);
 
         /* Write lock latency: from before sem_wait(&wrt) to acquiring wrt */
-        update_max(&runtime->max_write_latency_ns,
-                   timespec_diff_ns(&t0, &t1));
+        uint64_t latency_ns = timespec_diff_ns(&t0, &t1);
+        update_max(&runtime->max_write_latency_ns, latency_ns);
 
         /* Generate new value and checksum */
         uint64_t rnd64 = prng_next(&seed);
@@ -148,7 +144,7 @@ void* writer(void* args) {
 
         atomic_fetch_add(&runtime->total_writes, 1);
         write_log_record(runtime, ts, (uint64_t)new_val, new_chk, log_id,
-                         (uint16_t)sleep_ms);
+                         latency_ns);
     }
 
     return NULL;

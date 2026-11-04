@@ -29,16 +29,15 @@ int write_full(int fd, const void* buf, size_t len) {
 
 void write_log_record(runtime_t* runtime, uint64_t ts_ns, uint64_t value,
                       unsigned long checksum, uint16_t thread_id,
-                      uint16_t sleep_ms) {
+                      uint64_t latency_ns) {
     uint64_t rec[4];
 
     rec[0] = ts_ns;
     rec[1] = value;
 
-    rec[2] = ((uint64_t)(uint32_t)checksum << 32) | ((uint64_t)(thread_id & 0xFFFFU) << 16) |
-             ((uint64_t)(sleep_ms & 0xFFFFU));
-
-    rec[3] = 0;
+    rec[2] = ((uint64_t)(uint32_t)checksum << 32) |
+             ((uint64_t)(thread_id & 0xFFFFU) << 16);
+    rec[3] = latency_ns;
 
     pthread_mutex_lock(&runtime->log_mutex);
     if (runtime->log_fd >= 0) {

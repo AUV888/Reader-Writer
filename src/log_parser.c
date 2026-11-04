@@ -21,8 +21,8 @@
  * [2] business payload:
  *     bits 63..32: checksum low 32 bits
  *     bits 31..16: thread id
- *     bits 15..0 : sleep_time in ms
- * [3] reserved
+ *     bits 15..0 : reserved for future use
+ * [3] lock latency in nanoseconds
  */
 
 /**
@@ -58,8 +58,8 @@ static void format_ns_in_day(uint64_t ns, char *out, size_t out_size) {
  * @brief Convert a binary RW log file to CSV on standard output.
  *
  * Exactly one input-file path is required. Complete 32-byte records are
- * parsed, checksum validity is reported, and an incomplete trailing record
- * is ignored with a warning.
+ * parsed, checksum validity and lock-acquisition latency are reported, and
+ * an incomplete trailing record is ignored with a warning.
  *
  * @param[in] argc Number of command-line arguments.
  * @param[in] argv Command-line argument vector; argv[1] is the input file.
@@ -92,8 +92,7 @@ int main(int argc, char *argv[]) {
         "checksum_hex,"
         "checksum_ok,"
         "thread_id,"
-        "sleep_ms,"
-        "reserved_hex\n"
+        "latency_ns\n"
     );
 
     unsigned char buf[REC_SIZE];
@@ -114,11 +113,10 @@ int main(int argc, char *argv[]) {
         uint64_t timestamp_ns = rec[0];
         uint64_t value = rec[1];
         uint64_t third = rec[2];
-        uint64_t reserved = rec[3];
+        uint64_t latency_ns = rec[3];
 
         uint32_t checksum = (uint32_t)(third >> 32);
         uint32_t thread_id = (uint32_t)((third >> 16) & 0xFFFFULL);
-        uint32_t sleep_ms = (uint32_t)(third & 0xFFFFULL);
 
         uint32_t expected_checksum =
             (uint32_t)(value ^ CHECKSUM_MAGIC_NUMBER);
@@ -135,16 +133,14 @@ int main(int argc, char *argv[]) {
             "0x%08" PRIx32 ","
             "%d,"
             "%" PRIu32 ","
-            "%" PRIu32 ","
-            "0x%016" PRIx64 "\n",
+            "%" PRIu64 "\n",
             seq,
             time_str,
             value,
             checksum,
             checksum_ok,
             thread_id,
-            sleep_ms,
-            reserved
+            latency_ns
         );
 
         seq++;

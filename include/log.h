@@ -20,8 +20,8 @@
  * [2] business payload:
  *     bits 63..32: checksum low 32 bits
  *     bits 31..16: thread id
- *     bits 15..0 : sleep_time in ms, 0..4999
- * [3] reserved: 0
+ *     bits 15..0 : reserved for future use
+ * [3] lock latency: nanoseconds spent waiting to acquire read/write access
  */
 
 /**
@@ -40,20 +40,21 @@ int write_full(int fd, const void* buf, size_t len);
  * @brief Append one binary log record to the runtime log file.
  *
  * The record contains the timestamp, business value, checksum, thread ID,
- * and sleep duration. Log-file access is serialized by runtime->log_mutex.
+ * and lock-acquisition latency. Log-file access is serialized by
+ * runtime->log_mutex.
  *
  * @param[in,out] runtime Runtime state containing the log descriptor and lock.
  * @param[in] ts_ns Timestamp in nanoseconds within the UTC day.
  * @param[in] value Value read or written by the worker.
  * @param[in] checksum Business checksum associated with @p value.
  * @param[in] thread_id Worker identifier stored in the record.
- * @param[in] sleep_ms Sleep duration in milliseconds.
+ * @param[in] latency_ns Time spent waiting to acquire read/write access.
  *
  * @note Write failures are currently ignored after the record is formatted.
  */
 void write_log_record(runtime_t* runtime, uint64_t ts_ns, uint64_t value,
                       unsigned long checksum, uint16_t thread_id,
-                      uint16_t sleep_ms);
+                      uint64_t latency_ns);
 
 /**
  * @brief Generate a timestamp-based log filename.
