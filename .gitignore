@@ -34,6 +34,10 @@
 /bin
 .vscode/
 .DS_Store
+__pycache__/
+*.pyc
+script/.venv/
+script/output/
 
 # Log files
 *.log
