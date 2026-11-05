@@ -206,8 +206,8 @@ void* reader(void* args) {
         unsigned long val = data->value;
         unsigned long chk = data->checksum;
 
-        /* Read Biz time cost: random within 1ms = 0..999us */
-        uint32_t biz_us = (uint32_t)prng_range(&seed, 1000);
+        /* Read Biz time cost */
+        uint32_t biz_us = (uint32_t)prng_range(&seed, READER_BIZ_TIME);
         sleep_us(biz_us, stop);
 
         release_read_access(runtime);
@@ -265,8 +265,8 @@ void* writer(void* args) {
         data->value = new_val;
         data->checksum = new_chk;
 
-        /* Write Biz time cost: random within 5ms = 0..4999us */
-        uint32_t biz_us = (uint32_t)prng_range(&seed, 5000);
+        /* Write Biz time cost */
+        uint32_t biz_us = (uint32_t)prng_range(&seed, WRITER_BIZ_TIME);
         sleep_us(biz_us, stop);
 
         release_write_access(runtime);

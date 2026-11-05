@@ -7,6 +7,8 @@
  */
 
 #include <stdint.h>
+#define READER_BIZ_TIME 1000
+#define WRITER_BIZ_TIME 5000
 
 /**
  * @brief Execute the reader-thread workload.
