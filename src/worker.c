@@ -179,7 +179,8 @@ void* reader(void* args) {
 
     while (!*stop) {
         /* Randomize the interval before this reader's next request. */
-        uint32_t arrival_delay_ms = (uint32_t)prng_range(&seed, 5000);
+        uint32_t arrival_delay_ms =
+            (uint32_t)prng_range(&seed, ARRIVAL_DELAY_LIMIT_MS);
         sleep_us(arrival_delay_ms * 1000U, stop);
 
         if (*stop) {
@@ -237,7 +238,8 @@ void* writer(void* args) {
 
     while (!*stop) {
         /* Randomize the interval before this writer's next request. */
-        uint32_t arrival_delay_ms = (uint32_t)prng_range(&seed, 5000);
+        uint32_t arrival_delay_ms =
+            (uint32_t)prng_range(&seed, ARRIVAL_DELAY_LIMIT_MS);
         sleep_us(arrival_delay_ms * 1000U, stop);
 
         if (*stop) {

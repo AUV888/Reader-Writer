@@ -128,10 +128,8 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
 
-    uint64_t base_seed = (uint64_t)time(NULL);
-    if (base_seed == 0) {
-        base_seed = 0x123456789ABCDEF0ULL;
-    }
+    /* Keep arrivals reproducible across policy comparisons. */
+    const uint64_t base_seed = 0x5EED1234ABCDEF01ULL;
 
     /* Reader log IDs start at zero. */
     for (int i = 0; i < reader_size; i++) {

@@ -7,7 +7,9 @@
  */
 
 #include <stdint.h>
-#define READER_BIZ_TIME 1000
+/* High-contention workload with equal business time for both roles. */
+#define ARRIVAL_DELAY_LIMIT_MS 20
+#define READER_BIZ_TIME 5000
 #define WRITER_BIZ_TIME 5000
 
 /**
