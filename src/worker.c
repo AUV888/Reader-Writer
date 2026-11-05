@@ -3,10 +3,169 @@
 #include <stdlib.h>
 #include <time.h>
 
+#include "../include/arguments.h"
 #include "../include/log.h"
 #include "../include/rand.h"
 #include "../include/structs.h"
 #include "../include/util.h"
+
+/**
+ * @brief Acquire read access according to the selected scheduling mode.
+ *
+ * @param[in,out] runtime Shared synchronization state.
+ * @param[in] stop Asynchronous shutdown flag.
+ * @return 1 when read access is acquired, or 0 when shutdown interrupts it.
+ */
+static int acquire_read_access(runtime_t* runtime,
+                               const volatile sig_atomic_t* stop) {
+    if (mode == MODE_READER_FIRST) {
+        sem_wait_retry(&runtime->mut);
+        if (*stop) {
+            sem_post(&runtime->mut);
+            return 0;
+        }
+
+        runtime->read_count++;
+        if (runtime->read_count == 1) {
+            sem_wait_retry(&runtime->wrt);
+            if (*stop) {
+                runtime->read_count--;
+                sem_post(&runtime->wrt);
+                sem_post(&runtime->mut);
+                return 0;
+            }
+        }
+
+        sem_post(&runtime->mut);
+        return 1;
+    }
+
+    if (mode == MODE_WRITER_FIRST) {
+        sem_wait_retry(&runtime->reader_gate);
+        if (*stop) {
+            sem_post(&runtime->reader_gate);
+            return 0;
+        }
+
+        sem_wait_retry(&runtime->mut);
+        if (*stop) {
+            sem_post(&runtime->mut);
+            sem_post(&runtime->reader_gate);
+            return 0;
+        }
+
+        runtime->read_count++;
+        if (runtime->read_count == 1) {
+            sem_wait_retry(&runtime->wrt);
+            if (*stop) {
+                runtime->read_count--;
+                sem_post(&runtime->wrt);
+                sem_post(&runtime->mut);
+                sem_post(&runtime->reader_gate);
+                return 0;
+            }
+        }
+
+        sem_post(&runtime->mut);
+        sem_post(&runtime->reader_gate);
+        return 1;
+    }
+
+    return 0;
+}
+
+/**
+ * @brief Release read access after all readers have finished.
+ *
+ * @param[in,out] runtime Shared synchronization state.
+ */
+static void release_read_access(runtime_t* runtime) {
+    sem_wait_retry(&runtime->mut);
+    runtime->read_count--;
+    if (runtime->read_count == 0) {
+        sem_post(&runtime->wrt);
+    }
+    sem_post(&runtime->mut);
+}
+
+/**
+ * @brief Acquire write access according to the selected scheduling mode.
+ *
+ * In writer-first mode, the first waiting writer closes reader_gate so new
+ * readers cannot enter while writers are pending.
+ *
+ * @param[in,out] runtime Shared synchronization state.
+ * @param[in] stop Asynchronous shutdown flag.
+ * @return 1 when write access is acquired, or 0 when shutdown interrupts it.
+ */
+static int acquire_write_access(runtime_t* runtime,
+                                const volatile sig_atomic_t* stop) {
+    if (mode == MODE_READER_FIRST) {
+        sem_wait_retry(&runtime->wrt);
+        if (*stop) {
+            sem_post(&runtime->wrt);
+            return 0;
+        }
+        return 1;
+    }
+
+    if (mode == MODE_WRITER_FIRST) {
+        sem_wait_retry(&runtime->writer_mutex);
+        if (*stop) {
+            sem_post(&runtime->writer_mutex);
+            return 0;
+        }
+
+        runtime->writer_count++;
+        if (runtime->writer_count == 1) {
+            sem_wait_retry(&runtime->reader_gate);
+            if (*stop) {
+                runtime->writer_count--;
+                sem_post(&runtime->writer_mutex);
+                sem_post(&runtime->reader_gate);
+                return 0;
+            }
+        }
+        sem_post(&runtime->writer_mutex);
+
+        sem_wait_retry(&runtime->wrt);
+        if (*stop) {
+            sem_post(&runtime->wrt);
+            sem_wait_retry(&runtime->writer_mutex);
+            runtime->writer_count--;
+            if (runtime->writer_count == 0) {
+                sem_post(&runtime->reader_gate);
+            }
+            sem_post(&runtime->writer_mutex);
+            return 0;
+        }
+        return 1;
+    }
+
+    return 0;
+}
+
+/**
+ * @brief Release write access and reopen the reader gate when appropriate.
+ *
+ * @param[in,out] runtime Shared synchronization state.
+ */
+static void release_write_access(runtime_t* runtime) {
+    if (mode == MODE_READER_FIRST) {
+        sem_post(&runtime->wrt);
+        return;
+    }
+
+    if (mode == MODE_WRITER_FIRST) {
+        sem_post(&runtime->wrt);
+        sem_wait_retry(&runtime->writer_mutex);
+        runtime->writer_count--;
+        if (runtime->writer_count == 0) {
+            sem_post(&runtime->reader_gate);
+        }
+        sem_post(&runtime->writer_mutex);
+    }
+}
 
 void* reader(void* args) {
     args_t* ar = (args_t*)args;
@@ -30,34 +189,15 @@ void* reader(void* args) {
         struct timespec t0, t1;
         clock_gettime(CLOCK_MONOTONIC, &t0);
 
-        sem_wait_retry(&runtime->mut);
-        if (*stop) {
-            sem_post(&runtime->mut);
+        if (!acquire_read_access(runtime, stop)) {
             break;
         }
-
-        runtime->read_count++;
-
-        if (runtime->read_count == 1) {
-            sem_wait_retry(&runtime->wrt);
-
-            if (*stop) {
-                /* Rollback first reader state before exit */
-                runtime->read_count--;
-                sem_post(&runtime->wrt);
-                sem_post(&runtime->mut);
-                break;
-            }
-        }
-
-        sem_post(&runtime->mut);
 
         clock_gettime(CLOCK_MONOTONIC, &t1);
 
         /*
-         * Read lock latency:
-         * from before sem_wait(&mut) to acquiring full read permission.
-         * For the first reader, this includes waiting on wrt.
+         * Read lock latency: from before the policy-specific lock
+         * acquisition to obtaining complete read permission.
          */
         uint64_t latency_ns = timespec_diff_ns(&t0, &t1);
         update_max(&runtime->max_read_latency_ns, latency_ns);
@@ -70,13 +210,7 @@ void* reader(void* args) {
         uint32_t biz_us = (uint32_t)prng_range(&seed, 1000);
         sleep_us(biz_us, stop);
 
-        /* Release read permission */
-        sem_wait_retry(&runtime->mut);
-        runtime->read_count--;
-        if (runtime->read_count == 0) {
-            sem_post(&runtime->wrt);
-        }
-        sem_post(&runtime->mut);
+        release_read_access(runtime);
 
         if ((val ^ CHECKSUM_MAGIC_NUMBER) != chk) {
             atomic_fetch_add(&runtime->checksum_errors, 1);
@@ -85,8 +219,7 @@ void* reader(void* args) {
         uint64_t ts = now_ns_in_day();
 
         atomic_fetch_add(&runtime->total_reads, 1);
-        write_log_record(runtime, ts, (uint64_t)val, chk, log_id,
-                         latency_ns);
+        write_log_record(runtime, ts, (uint64_t)val, chk, log_id, latency_ns);
     }
 
     return NULL;
@@ -114,9 +247,7 @@ void* writer(void* args) {
         struct timespec t0, t1;
         clock_gettime(CLOCK_MONOTONIC, &t0);
 
-        sem_wait_retry(&runtime->wrt);
-        if (*stop) {
-            sem_post(&runtime->wrt);
+        if (!acquire_write_access(runtime, stop)) {
             break;
         }
 
@@ -138,13 +269,12 @@ void* writer(void* args) {
         uint32_t biz_us = (uint32_t)prng_range(&seed, 5000);
         sleep_us(biz_us, stop);
 
-        sem_post(&runtime->wrt);
+        release_write_access(runtime);
 
         uint64_t ts = now_ns_in_day();
 
         atomic_fetch_add(&runtime->total_writes, 1);
-        write_log_record(runtime, ts, (uint64_t)new_val, new_chk, log_id,
-                         latency_ns);
+        write_log_record(runtime, ts, (uint64_t)new_val, new_chk, log_id, latency_ns);
     }
 
     return NULL;

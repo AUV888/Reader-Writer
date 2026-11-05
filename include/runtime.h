@@ -13,7 +13,10 @@ typedef struct {
     pthread_mutex_t log_mutex;
     sem_t mut;
     sem_t wrt;
+    sem_t reader_gate;
+    sem_t writer_mutex;
     long read_count;
+    long writer_count;
 
     int log_fd;
     char log_path[LOG_PATH_SIZE];

@@ -54,6 +54,12 @@ int main(int argc, char* argv[]) {
     if (arguments_parse(argc, argv, &arguments) != 0) {
         return EXIT_FAILURE;
     }
+    if (mode == MODE_FIRST_ADAPTIVE) {
+        fprintf(stderr,
+                "Adaptive scheduling (mode=3) is reserved but not "
+                "implemented yet\n");
+        return EXIT_FAILURE;
+    }
 
     const int reader_size = arguments.reader_count;
     const int writer_size = arguments.writer_count;
@@ -77,6 +83,7 @@ int main(int argc, char* argv[]) {
     runtime_t runtime = {
         .log_mutex = PTHREAD_MUTEX_INITIALIZER,
         .read_count = 0,
+        .writer_count = 0,
         .log_fd = -1,
         .total_reads = 0,
         .total_writes = 0,
@@ -87,6 +94,8 @@ int main(int argc, char* argv[]) {
 
     sem_init(&runtime.mut, 0, 1);
     sem_init(&runtime.wrt, 0, 1);
+    sem_init(&runtime.reader_gate, 0, 1);
+    sem_init(&runtime.writer_mutex, 0, 1);
 
     make_log_path(&runtime);
 
@@ -97,7 +106,8 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
 
-    printf("Readers: %d, Writers: %d\n", reader_size, writer_size);
+    printf("Readers: %d, Writers: %d, Mode: %d\n", reader_size,
+           writer_size, mode);
     printf("Log file: %s\n", runtime.log_path);
     fflush(stdout);
 
@@ -200,6 +210,8 @@ int main(int argc, char* argv[]) {
 
     sem_destroy(&runtime.mut);
     sem_destroy(&runtime.wrt);
+    sem_destroy(&runtime.reader_gate);
+    sem_destroy(&runtime.writer_mutex);
     pthread_mutex_destroy(&runtime.log_mutex);
 
     return EXIT_SUCCESS;
